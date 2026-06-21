@@ -380,9 +380,9 @@ export default function Dashboard() {
                 <div className="who">{onTwoGoals.slice(0, 3).map((s) => s.player.name.split(" ").pop()).join(", ")}…</div>
               </div>
               <div className="kstat">
-                <div className="big">{messiGoals ?? "–"}</div>
-                <div className="lbl">Messi Goals This WC</div>
-                <div className="who">Argentina · all-time record chaser</div>
+                <div className="big">{topScorers.length}</div>
+                <div className="lbl">Players on {topGoals} Goals</div>
+                <div className="who">{topScorers.map((s) => s.player.name.split(" ").pop()).join(", ")}</div>
               </div>
             </div>
           )}
