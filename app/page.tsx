@@ -217,19 +217,21 @@ export default function Dashboard() {
 
       <nav>
         <div className="wrap">
-          <div className="tabs">
-            {TABS.map((t) => (
-              <button key={t} className={`tab${tab === t ? " active" : ""}`} onClick={() => setTab(t)}>
-                {t === "standings" && "Standings"}
-                {t === "fixtures" && "Fixtures & Results"}
-                {t === "goals" && "Goals / Team"}
-                {t === "bracket" && "Bracket"}
-                {t === "scorers" && "Top Scorers"}
-                {t === "assists" && "Assists"}
-                {t === "keepers" && "Goalkeepers"}
-                {t === "myteam" && "My Team"}
-              </button>
-            ))}
+          <div className="tabs-wrap">
+            <div className="tabs">
+              {TABS.map((t) => (
+                <button key={t} className={`tab${tab === t ? " active" : ""}`} onClick={() => setTab(t)}>
+                  {t === "standings" && "Standings"}
+                  {t === "fixtures" && "Fixtures & Results"}
+                  {t === "goals" && "Goals / Team"}
+                  {t === "bracket" && "Bracket"}
+                  {t === "scorers" && "Top Scorers"}
+                  {t === "assists" && "Assists"}
+                  {t === "keepers" && "Goalkeepers"}
+                  {t === "myteam" && "My Team"}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       </nav>

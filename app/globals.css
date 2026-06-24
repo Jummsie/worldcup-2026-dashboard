@@ -106,6 +106,20 @@ nav {
   backdrop-filter: blur(14px);
   border-bottom: 1px solid var(--line);
 }
+/* Wrapper lets the fade sit on top of the scrollable tab strip */
+.tabs-wrap {
+  position: relative;
+}
+/* Right-side fade to hint there are more tabs */
+.tabs-wrap::after {
+  content: "";
+  position: absolute;
+  top: 0; right: 0; bottom: 0;
+  width: 48px;
+  background: linear-gradient(to right, transparent, rgba(10,14,19,.92));
+  pointer-events: none;
+  z-index: 1;
+}
 .tabs { display: flex; overflow-x: auto; scrollbar-width: none; }
 .tabs::-webkit-scrollbar { display: none; }
 .tab {
