@@ -40,7 +40,7 @@ interface ApiData {
   matches: Match[];
 }
 
-const TABS = ["standings", "fixtures", "goals", "bracket", "scorers", "assists", "keepers"] as const;
+const TABS = ["standings", "fixtures", "goals", "bracket", "scorers", "assists", "keepers", "myteam"] as const;
 type Tab = typeof TABS[number];
 
 const GLOVE_FAVOURITES = [
@@ -71,6 +71,7 @@ export default function Dashboard() {
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState("");
   const [tab, setTab] = useState<Tab>("standings");
+  const [selectedTeam, setSelectedTeam] = useState<string>("");
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const fetchData = useCallback(async () => {
@@ -105,23 +106,55 @@ export default function Dashboard() {
   const sf   = allMatches.filter((m) => m.stage === "SEMI_FINALS");
   const fin  = allMatches.filter((m) => m.stage === "FINAL");
 
-  function BracketSlot({ m, i }: { m?: Match; i: number }) {
-    if (!m) return <div key={i} className="slot">TBD</div>;
-    const finished = isFinished(m.status);
-    const home = m.homeTeam?.shortName ?? "TBD";
-    const away = m.awayTeam?.shortName ?? "TBD";
-    const known = home !== "TBD" && away !== "TBD";
+  function MatchupCard({ m }: { m?: Match }) {
+    const finished = m ? isFinished(m.status) : false;
+    const live     = m ? isLive(m.status) : false;
+    const hs = m?.score.fullTime.home ?? null;
+    const as_ = m?.score.fullTime.away ?? null;
+    const homeWon = finished && hs !== null && as_ !== null && hs > as_;
+    const awayWon = finished && hs !== null && as_ !== null && as_ > hs;
+    const homeName = m?.homeTeam?.shortName ?? "TBD";
+    const awayName = m?.awayTeam?.shortName ?? "TBD";
+    const homeTbd = homeName === "TBD";
+    const awayTbd = awayName === "TBD";
     return (
-      <div className={`slot${known ? " known" : ""}`}>
-        {home} {finished ? `${m.score.fullTime.home}–${m.score.fullTime.away}` : "vs"} {away}
+      <div className="bmatch-group">
+        {m && <div className="bmatch-date">{fmtDate(m.utcDate)}</div>}
+        <div className={`bteam${homeTbd ? " tbd" : homeWon ? " winner" : finished ? " loser" : ""}`}>
+          {homeName}
+          {(finished || live) && hs !== null && <span className="bscore">{hs}</span>}
+        </div>
+        <div className="bteam-divider" />
+        <div className={`bteam${awayTbd ? " tbd" : awayWon ? " winner" : finished ? " loser" : ""}`}>
+          {awayName}
+          {(finished || live) && as_ !== null && <span className="bscore">{as_}</span>}
+        </div>
       </div>
     );
   }
 
-  function placeholders(count: number, label: string) {
-    return Array.from({ length: count }, (_, i) => (
-      <div key={i} className="slot">{label} {i + 1}</div>
-    ));
+  function BracketRound({ matches, count, label }: { matches: Match[]; count: number; label: string }) {
+    const items: (Match | undefined)[] = matches.length ? matches : Array(count).fill(undefined);
+    // Group into pairs for connector lines
+    const pairs: (Match | undefined)[][] = [];
+    for (let i = 0; i < items.length; i += 2) pairs.push([items[i], items[i + 1]]);
+    return (
+      <div className="rnd">
+        <h4>{label}</h4>
+        <div className="rnd-matches">
+          {pairs.map((pair, pi) => (
+            <div key={pi} className="bracket-pair">
+              {pair.map((m, mi) => (
+                <div key={mi} className="bracket-pair-item">
+                  <MatchupCard m={m} />
+                </div>
+              ))}
+              {pair.length === 2 && <div className="bracket-pair-vline" />}
+            </div>
+          ))}
+        </div>
+      </div>
+    );
   }
 
   const matchesByDate: Record<string, Match[]> = {};
@@ -194,6 +227,7 @@ export default function Dashboard() {
                 {t === "scorers" && "Top Scorers"}
                 {t === "assists" && "Assists"}
                 {t === "keepers" && "Goalkeepers"}
+                {t === "myteam" && "My Team"}
               </button>
             ))}
           </div>
@@ -260,8 +294,21 @@ export default function Dashboard() {
           <p className="secnote">Final scores and upcoming matches</p>
           {!data ? (
             <div className="loading">Loading fixtures…</div>
-          ) : (
-            sortedDates.map((date) => (
+          ) : (<>
+            {/* Live matches pinned to top */}
+            {allMatches.filter((m) => isLive(m.status)).length > 0 && (
+              <div className="fxday live-day">
+                <div className="fxdate live-date-label">🟢 LIVE NOW</div>
+                {allMatches.filter((m) => isLive(m.status)).map((m) => (
+                  <div className="fx live-m" key={m.id}>
+                    <div className="side home">{m.homeTeam.shortName}<span className="abbr">{m.homeTeam.tla}</span></div>
+                    <div className="sc">{m.score.fullTime.home ?? 0} – {m.score.fullTime.away ?? 0}</div>
+                    <div className="side away">{m.awayTeam.shortName}<span className="abbr">{m.awayTeam.tla}</span></div>
+                  </div>
+                ))}
+              </div>
+            )}
+            {sortedDates.map((date) => (
               <div className="fxday" key={date}>
                 <div className="fxdate">{date}</div>
                 {matchesByDate[date].map((m) => {
@@ -290,7 +337,8 @@ export default function Dashboard() {
                   );
                 })}
               </div>
-            ))
+            ))}
+          </>
           )}
         </div>
       </div>
@@ -335,27 +383,28 @@ export default function Dashboard() {
           {!data ? (
             <div className="loading">Loading…</div>
           ) : (
-            <div className="rounds">
-              <div className="rnd">
-                <h4>Round of 32</h4>
-                {r32.length ? r32.map((m, i) => <BracketSlot key={m.id ?? i} m={m} i={i} />) : placeholders(8, "Match")}
-              </div>
-              <div className="rnd">
-                <h4>Round of 16</h4>
-                {r16.length ? r16.map((m, i) => <BracketSlot key={m.id ?? i} m={m} i={i} />) : placeholders(4, "Match")}
-              </div>
-              <div className="rnd">
-                <h4>Quarter-finals</h4>
-                {qf.length ? qf.map((m, i) => <BracketSlot key={m.id ?? i} m={m} i={i} />) : placeholders(2, "QF")}
-              </div>
-              <div className="rnd">
-                <h4>Semi-finals</h4>
-                {sf.length ? sf.map((m, i) => <BracketSlot key={m.id ?? i} m={m} i={i} />) : placeholders(1, "SF")}
-              </div>
-              <div className="rnd">
-                <h4>Final</h4>
-                {fin.length ? fin.map((m, i) => <BracketSlot key={m.id ?? i} m={m} i={i} />) : <div className="slot final">Champion 2026</div>}
-                <div className="trophy">🏆</div>
+            <div className="bracket-scroll">
+              <div className="rounds">
+                <BracketRound matches={r32} count={16} label="Round of 32" />
+                <BracketRound matches={r16} count={8}  label="Round of 16" />
+                <BracketRound matches={qf}  count={4}  label="Quarter-finals" />
+                <BracketRound matches={sf}  count={2}  label="Semi-finals" />
+                <div className="rnd">
+                  <h4>Final</h4>
+                  <div className="rnd-matches">
+                    {fin.length ? (
+                      <div className="bracket-pair">
+                        <div className="bracket-pair-item"><MatchupCard m={fin[0]} /></div>
+                      </div>
+                    ) : (
+                      <div className="bracket-champion">
+                        <div className="trophy-icon">🏆</div>
+                        <div className="champ-label">Champion 2026</div>
+                        <div className="champ-name">19 July · MetLife</div>
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
             </div>
           )}
@@ -446,6 +495,220 @@ export default function Dashboard() {
               </div>
             </div>
           )}
+        </div>
+      </div>
+
+      {/* MY TEAM */}
+      <div className={`section${tab === "myteam" ? " show" : ""}`}>
+        <div className="wrap">
+          <h2 className="sectitle">My Team</h2>
+          <p className="secnote">Select a nation to follow their full World Cup journey</p>
+
+          {/* Team selector */}
+          <div className="team-select-wrap">
+            <label className="team-select-label" htmlFor="team-pick">Choose your team</label>
+            <select
+              id="team-pick"
+              className="team-select"
+              value={selectedTeam}
+              onChange={(e) => setSelectedTeam(e.target.value)}
+            >
+              <option value="">— Select a team —</option>
+              {Object.entries(data?.groupMap ?? {})
+                .sort(([a], [b]) => a.localeCompare(b))
+                .flatMap(([, rows]) => rows)
+                .sort((a, b) => a.team.name.localeCompare(b.team.name))
+                .map((row) => (
+                  <option key={row.team.tla} value={row.team.tla}>
+                    {row.team.name} ({row.team.tla})
+                  </option>
+                ))}
+            </select>
+          </div>
+
+          {!selectedTeam ? (
+            <div className="no-team">
+              Select a team above to see their fixtures,<br />results and knockout journey.
+            </div>
+          ) : !data ? (
+            <div className="loading">Loading…</div>
+          ) : (() => {
+            // Find team's group
+            const teamGroup = Object.entries(data.groupMap).find(([, rows]) =>
+              rows.some((r) => r.team.tla === selectedTeam)
+            );
+            const groupLetter = teamGroup?.[0] ?? "";
+            const groupRows = teamGroup?.[1] ?? [];
+            const teamInfo = groupRows.find((r) => r.team.tla === selectedTeam)?.team;
+
+            // All matches involving this team
+            const teamMatches = data.matches.filter(
+              (m) => m.homeTeam?.tla === selectedTeam || m.awayTeam?.tla === selectedTeam
+            );
+            const groupMatches = teamMatches.filter((m) => m.stage === "GROUP_STAGE")
+              .sort((a, b) => new Date(a.utcDate).getTime() - new Date(b.utcDate).getTime());
+            const knockoutMatches = teamMatches.filter((m) => m.stage !== "GROUP_STAGE")
+              .sort((a, b) => new Date(a.utcDate).getTime() - new Date(b.utcDate).getTime());
+
+            // Work out if team has qualified (top 2) or in the running (3rd)
+            const teamRow = groupRows.find((r) => r.team.tla === selectedTeam);
+            const position = groupRows.findIndex((r) => r.team.tla === selectedTeam) + 1;
+            const gamesPlayed = teamRow?.playedGames ?? 0;
+            const totalGroupGames = 3;
+
+            function matchResult(m: Match): "win" | "loss" | "draw" | "upcoming" | "live" {
+              if (isLive(m.status)) return "live";
+              if (!isFinished(m.status)) return "upcoming";
+              const isHome = m.homeTeam.tla === selectedTeam;
+              const ours = isHome ? (m.score.fullTime.home ?? 0) : (m.score.fullTime.away ?? 0);
+              const theirs = isHome ? (m.score.fullTime.away ?? 0) : (m.score.fullTime.home ?? 0);
+              if (ours > theirs) return "win";
+              if (ours < theirs) return "loss";
+              return "draw";
+            }
+
+            function scoreClass(result: string) {
+              if (result === "win") return "jsc win";
+              if (result === "loss") return "jsc loss";
+              if (result === "live") return "jsc live";
+              return "jsc";
+            }
+
+            return (
+              <div className="journey">
+                {/* Group standing */}
+                <div className="journey-block">
+                  <div className="journey-block-head">
+                    <h3>Group {groupLetter}</h3>
+                    <span className={`stage-badge${position > 2 && gamesPlayed === totalGroupGames ? " eliminated" : ""}`}>
+                      {gamesPlayed < totalGroupGames
+                        ? `${totalGroupGames - gamesPlayed} game${totalGroupGames - gamesPlayed > 1 ? "s" : ""} remaining`
+                        : position <= 2 ? "Qualified" : "Eliminated"}
+                    </span>
+                  </div>
+                  <div className="group-mini">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>#</th><th>Team</th>
+                          <th className="c">W</th><th className="c">D</th><th className="c">L</th>
+                          <th className="p">Pts</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {groupRows.map((row, i) => (
+                          <tr key={row.team.tla}
+                            className={[i < 2 ? "qual" : "", row.team.tla === selectedTeam ? "selected-team" : ""].join(" ").trim()}
+                          >
+                            <td className="pos">{i + 1}</td>
+                            <td><span className="team-name">{row.team.shortName}</span><span className="abbr">{row.team.tla}</span></td>
+                            <td className="c">{row.won}</td>
+                            <td className="c">{row.draw}</td>
+                            <td className="c">{row.lost}</td>
+                            <td className="p pts">{row.points}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* Group stage matches */}
+                <div className="journey-block">
+                  <div className="journey-block-head">
+                    <h3>Group Stage Fixtures</h3>
+                  </div>
+                  <div className="journey-matches">
+                    {groupMatches.map((m) => {
+                      const isHome = m.homeTeam?.tla === selectedTeam;
+                      const opponent = isHome ? m.awayTeam : m.homeTeam;
+                      const finished = isFinished(m.status);
+                      const live = isLive(m.status);
+                      const result = matchResult(m);
+                      const hs = m.score.fullTime.home ?? 0;
+                      const as_ = m.score.fullTime.away ?? 0;
+                      return (
+                        <div className="jmatch" key={m.id}>
+                          <div className={`jside${isHome ? " highlight" : ""}`}>
+                            {m.homeTeam?.shortName ?? "TBD"}
+                            <span className="abbr">{m.homeTeam?.tla}</span>
+                          </div>
+                          {finished || live ? (
+                            <div className={scoreClass(result)}>{hs} – {as_}</div>
+                          ) : (
+                            <div className="jwhen">{fmtTime(m.utcDate)}<br />{fmtDate(m.utcDate)}</div>
+                          )}
+                          <div className={`jside away${!isHome ? " highlight" : ""}`}>
+                            <span className="abbr">{m.awayTeam?.tla}</span>
+                            {m.awayTeam?.shortName ?? "TBD"}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Knockout journey */}
+                {knockoutMatches.length > 0 && (
+                  <div className="journey-block">
+                    <div className="journey-block-head">
+                      <h3>Knockout Stage</h3>
+                      <span className="stage-badge">In Progress</span>
+                    </div>
+                    <div className="journey-matches">
+                      {knockoutMatches.map((m) => {
+                        const isHome = m.homeTeam?.tla === selectedTeam;
+                        const finished = isFinished(m.status);
+                        const live = isLive(m.status);
+                        const result = matchResult(m);
+                        const hs = m.score.fullTime.home ?? 0;
+                        const as_ = m.score.fullTime.away ?? 0;
+                        const stageLabel: Record<string, string> = {
+                          LAST_32: "Round of 32", LAST_16: "Round of 16",
+                          QUARTER_FINALS: "Quarter-final", SEMI_FINALS: "Semi-final", FINAL: "Final",
+                        };
+                        return (
+                          <div className="jmatch" key={m.id}>
+                            <div className={`jside${isHome ? " highlight" : ""}`}>
+                              <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, color: "var(--mut)", marginRight: 6 }}>
+                                {stageLabel[m.stage] ?? m.stage}
+                              </span>
+                              {m.homeTeam?.shortName ?? "TBD"}
+                            </div>
+                            {finished || live ? (
+                              <div className={scoreClass(result)}>{hs} – {as_}</div>
+                            ) : (
+                              <div className="jwhen">{fmtTime(m.utcDate)}<br />{fmtDate(m.utcDate)}</div>
+                            )}
+                            <div className={`jside away${!isHome ? " highlight" : ""}`}>
+                              {m.awayTeam?.shortName ?? "TBD"}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Not yet in knockout */}
+                {knockoutMatches.length === 0 && gamesPlayed < totalGroupGames && (
+                  <div className="journey-block">
+                    <div className="journey-block-head">
+                      <h3>Knockout Stage</h3>
+                      <span className="stage-badge tbd">TBD</span>
+                    </div>
+                    <div style={{ padding: "20px 18px", fontFamily: "'JetBrains Mono',monospace", fontSize: 12, color: "var(--mut)", lineHeight: 1.8 }}>
+                      {teamInfo?.name ?? selectedTeam} need to finish in the top 2 of Group {groupLetter}, or as one of the 8 best third-placed teams, to reach the Round of 32.
+                      <br /><br />
+                      Current position: <strong style={{ color: position <= 2 ? "var(--green)" : "var(--txt)" }}>
+                        {position}{position === 1 ? "st" : position === 2 ? "nd" : position === 3 ? "rd" : "th"} in Group {groupLetter}
+                      </strong>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
         </div>
       </div>
 
