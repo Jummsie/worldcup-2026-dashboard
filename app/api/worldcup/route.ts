@@ -55,11 +55,10 @@ export async function GET() {
       );
     }
 
-    return Response.json({
-      groupMap,
-      scorers: scorersData.scorers,
-      matches: matchesData.matches,
-    });
+    return Response.json(
+      { groupMap, scorers: scorersData.scorers, matches: matchesData.matches },
+      { headers: { "Cache-Control": "no-store, max-age=0" } }
+    );
   } catch (err) {
     return Response.json({ error: (err as Error).message }, { status: 502 });
   }

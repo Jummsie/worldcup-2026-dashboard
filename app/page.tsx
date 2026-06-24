@@ -76,7 +76,7 @@ export default function Dashboard() {
 
   const fetchData = useCallback(async () => {
     try {
-      const res = await fetch("/api/worldcup");
+      const res = await fetch("/api/worldcup", { cache: "no-store" });
       const json = await res.json();
       if (!res.ok || json.error) throw new Error(json.error ?? `HTTP ${res.status}`);
       setData(json as ApiData);
