@@ -398,6 +398,47 @@ table { width: 100%; border-collapse: collapse; table-layout: fixed; }
 .slot { background: var(--surface); border: 1px solid var(--line); border-radius: 7px; padding: 11px 12px; margin-bottom: 8px; font-size: 12px; color: var(--mut); font-family: 'JetBrains Mono', monospace; }
 .slot.final { border-color: var(--green); background: var(--green-soft); color: var(--green); text-align: center; font-weight: 600; }
 
+/* Eliminated notice */
+.eliminated-notice {
+  background: rgba(255,93,82,.08); border: 1px solid rgba(255,93,82,.3);
+  border-radius: 10px; padding: 16px 20px; margin-bottom: 24px;
+  font-size: 14px; color: #ff8079; font-weight: 500;
+}
+
+/* Road to the Final timeline */
+.road-block { margin-top: 8px; }
+.road-timeline { display: flex; flex-direction: column; padding: 4px 0 8px; }
+.road-step {
+  display: flex; align-items: center; gap: 16px;
+  padding: 16px 18px; border-left: 2px solid var(--line2);
+  position: relative;
+}
+.road-step + .road-step { border-top: 1px solid var(--line); }
+.road-step::before {
+  content: ""; position: absolute; left: -5px; top: 50%; transform: translateY(-50%);
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--line2); border: 2px solid var(--bg);
+}
+.road-step.final-step { border-left-color: var(--green); }
+.road-step.final-step::before { background: var(--green); }
+.road-step.eliminated-step { border-left-color: rgba(255,93,82,.4); opacity: .55; }
+.road-step.eliminated-step::before { background: rgba(255,93,82,.5); }
+
+.road-left { display: flex; flex-direction: column; gap: 3px; min-width: 130px; flex-shrink: 0; }
+.road-short {
+  font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 600;
+  letter-spacing: .1em; text-transform: uppercase; color: var(--txt);
+}
+.road-meta { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--mut2); line-height: 1.4; }
+.road-mid { flex: 1; }
+.road-opp { font-size: 14px; font-weight: 600; color: var(--txt); }
+.road-status { font-family: 'JetBrains Mono',monospace; font-size: 11px; font-weight: 600; flex-shrink: 0; }
+.road-status.upcoming { color: var(--mut); font-weight: 400; }
+.road-status.win      { color: var(--green); }
+.road-status.loss     { color: #ff8079; }
+.road-status.draw     { color: var(--gold); }
+.road-status.live     { color: #ff8079; animation: pulse 1.4s infinite; }
+
 /* Live Now banner in fixtures */
 .live-day { border: 1px solid var(--green-dim); border-radius: 10px; background: var(--green-soft); margin-bottom: 24px; padding: 4px 0; }
 .live-date-label { font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: .1em; color: var(--green); padding: 10px 16px 6px; }

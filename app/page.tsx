@@ -100,6 +100,22 @@ export default function Dashboard() {
 
   // Bracket
   const allMatches = data?.matches ?? [];
+
+  // Smart dropdown: once knockout has started, only show teams still in the tournament.
+  // A team is eliminated if they lost a finished knockout match.
+  const knockoutMatches = allMatches.filter((m) => m.stage !== "GROUP_STAGE");
+  const knockoutStarted = knockoutMatches.some((m) => isFinished(m.status) || isLive(m.status));
+  const eliminatedTLAs = new Set<string>();
+  if (knockoutStarted) {
+    knockoutMatches.filter((m) => isFinished(m.status)).forEach((m) => {
+      const hg = m.score.fullTime.home ?? 0;
+      const ag = m.score.fullTime.away ?? 0;
+      if (hg !== ag) {
+        eliminatedTLAs.add(hg < ag ? m.homeTeam.tla : m.awayTeam.tla);
+      }
+      // Penalty shootout — winner is in score.penalties if available
+    });
+  }
   const r32  = allMatches.filter((m) => m.stage === "LAST_32");
   const r16  = allMatches.filter((m) => m.stage === "LAST_16");
   const qf   = allMatches.filter((m) => m.stage === "QUARTER_FINALS");
@@ -519,6 +535,7 @@ export default function Dashboard() {
               {Object.entries(data?.groupMap ?? {})
                 .sort(([a], [b]) => a.localeCompare(b))
                 .flatMap(([, rows]) => rows)
+                .filter((row) => !eliminatedTLAs.has(row.team.tla))
                 .sort((a, b) => a.team.name.localeCompare(b.team.name))
                 .map((row) => (
                   <option key={row.team.tla} value={row.team.tla}>
@@ -528,11 +545,17 @@ export default function Dashboard() {
             </select>
           </div>
 
+          {selectedTeam && eliminatedTLAs.has(selectedTeam) && (
+            <div className="eliminated-notice">
+              ⚽ {selectedTeam} have been eliminated from the tournament. Select another team above.
+            </div>
+          )}
+
           {!selectedTeam ? (
             <div className="no-team">
               Select a team above to see their fixtures,<br />results and knockout journey.
             </div>
-          ) : !data ? (
+          ) : eliminatedTLAs.has(selectedTeam) ? null : !data ? (
             <div className="loading">Loading…</div>
           ) : (() => {
             // Find team's group
@@ -693,7 +716,7 @@ export default function Dashboard() {
                 )}
 
                 {/* Not yet in knockout */}
-                {knockoutMatches.length === 0 && gamesPlayed < totalGroupGames && (
+                {teamMatches.filter((m) => m.stage !== "GROUP_STAGE").length === 0 && gamesPlayed < totalGroupGames && (
                   <div className="journey-block">
                     <div className="journey-block-head">
                       <h3>Knockout Stage</h3>
@@ -708,6 +731,86 @@ export default function Dashboard() {
                     </div>
                   </div>
                 )}
+
+                {/* Road to the Final */}
+                {(() => {
+                  // Known round dates & venues for WC 2026 (used when team's match isn't drawn yet)
+                  const roundInfo: Record<string, { dates: string; venue: string }> = {
+                    LAST_32:        { dates: "28 Jun – 3 Jul",  venue: "Various stadiums" },
+                    LAST_16:        { dates: "4 – 7 Jul",       venue: "Various stadiums" },
+                    QUARTER_FINALS: { dates: "9 – 10 Jul",      venue: "Various stadiums" },
+                    SEMI_FINALS:    { dates: "14 – 15 Jul",     venue: "AT&T / MetLife"   },
+                    FINAL:          { dates: "19 Jul",           venue: "MetLife Stadium"  },
+                  };
+
+                  const stages = [
+                    { key: "LAST_32",        short: "R32",   label: "Round of 32"    },
+                    { key: "LAST_16",        short: "R16",   label: "Round of 16"    },
+                    { key: "QUARTER_FINALS", short: "QF",    label: "Quarter-Final"  },
+                    { key: "SEMI_FINALS",    short: "SF",    label: "Semi-Final"     },
+                    { key: "FINAL",          short: "FINAL", label: "The Final"      },
+                  ] as const;
+
+                  return (
+                    <div className="journey-block road-block">
+                      <div className="journey-block-head">
+                        <h3>Road to the Final</h3>
+                        {gamesPlayed < totalGroupGames && (
+                          <span className="stage-badge tbd" style={{ fontSize: 10 }}>Based on current standing</span>
+                        )}
+                      </div>
+                      <div className="road-timeline">
+                        {stages.map(({ key, short, label }) => {
+                          const m = allMatches.find(
+                            (x) => x.stage === key &&
+                              (x.homeTeam?.tla === selectedTeam || x.awayTeam?.tla === selectedTeam)
+                          );
+                          const finished = m ? isFinished(m.status) : false;
+                          const live     = m ? isLive(m.status) : false;
+                          const isHome   = m?.homeTeam?.tla === selectedTeam;
+                          const opponent = m ? (isHome ? m.awayTeam : m.homeTeam) : null;
+                          const hs = m?.score?.fullTime?.home ?? 0;
+                          const as_ = m?.score?.fullTime?.away ?? 0;
+                          const ourGoals   = isHome ? hs : as_;
+                          const theirGoals = isHome ? as_ : hs;
+                          const won  = finished && ourGoals > theirGoals;
+                          const lost = finished && ourGoals < theirGoals;
+                          const drew = finished && ourGoals === theirGoals;
+
+                          const info = roundInfo[key];
+                          const dateStr = m ? fmtDate(m.utcDate) : info.dates;
+                          const venueStr = info.venue;
+
+                          let oppLabel = "Opponent TBD";
+                          if (opponent?.shortName) oppLabel = `vs ${opponent.shortName} (${opponent.tla})`;
+                          else if (m) oppLabel = "vs TBD";
+
+                          let statusLabel = "UPCOMING";
+                          let statusCls   = "road-status upcoming";
+                          if (live)  { statusLabel = "● LIVE";               statusCls = "road-status live"; }
+                          else if (won)  { statusLabel = `WON ${ourGoals}–${theirGoals}`;  statusCls = "road-status win"; }
+                          else if (lost) { statusLabel = `LOST ${ourGoals}–${theirGoals}`; statusCls = "road-status loss"; }
+                          else if (drew) { statusLabel = `DRAW ${ourGoals}–${theirGoals}`; statusCls = "road-status draw"; }
+
+                          const isFinal = key === "FINAL";
+
+                          return (
+                            <div className={`road-step${isFinal ? " final-step" : ""}${lost ? " eliminated-step" : ""}`} key={key}>
+                              <div className="road-left">
+                                <div className="road-short">{short}</div>
+                                <div className="road-meta">{dateStr} · {venueStr}</div>
+                              </div>
+                              <div className="road-mid">
+                                <div className="road-opp">{oppLabel}</div>
+                              </div>
+                              <div className={statusCls}>{statusLabel}</div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
             );
           })()}
