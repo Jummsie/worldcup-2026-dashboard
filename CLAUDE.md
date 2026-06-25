@@ -47,6 +47,19 @@ GitHub repo: https://github.com/Jummsie/worldcup-2026-dashboard
 - `BracketRound` component groups matches into pairs and renders with connector lines
 - Connector lines: `.bracket-pair-item::after` (horizontal stub) + `.bracket-pair-vline` (vertical line between pair, `top: 25%; bottom: 25%`)
 - All rounds use `justify-content: space-around; flex: 1` so matches align vertically across columns
+- **Known limitation**: football-data.org returns `null` for homeTeam/awayTeam on LAST_32 matches until the group stage is fully complete. Bracket will auto-populate once the API updates (expected ~28 Jun 2026). This is an API limitation, not a code bug.
+
+## My Team tab
+- Dropdown filters out eliminated teams once knockout begins (`eliminatedTLAs` set built from finished knockout matches with a losing team)
+- Shows group table, group fixtures, knockout stage matches, and **Road to the Final** timeline
+- Road to the Final: 5-step vertical timeline (R32 → R16 → QF → SF → Final) with dates, venues (hardcoded per round), opponent (from API when drawn), and result/status
+- Shows "Based on current standing" badge during group stage
+
+## Known API behaviours
+- `next: { revalidate: 55 }` on server-side fetches protects the 10 req/min rate limit
+- API route returns `Cache-Control: no-store` to prevent Netlify CDN caching causing stale live scores
+- Client fetch uses `cache: "no-store"` to prevent browser caching
+- R32 homeTeam/awayTeam are null until group stage ends — this is expected
 
 ## Deployment — Netlify
 - Auto-deploys from `main` branch on GitHub push
