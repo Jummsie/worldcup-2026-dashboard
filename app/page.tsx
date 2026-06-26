@@ -342,6 +342,8 @@ export default function Dashboard() {
                       {finished || live ? (
                         <div className="sc">
                           {m.score.fullTime.home ?? 0} – {m.score.fullTime.away ?? 0}
+                          {finished && <div className="sc-tag">FT</div>}
+                          {live && <div className="sc-tag lv">Live</div>}
                         </div>
                       ) : (
                         <div className="when">{fmtTime(m.utcDate)}</div>
@@ -349,8 +351,6 @@ export default function Dashboard() {
                       <div className="side away">
                         <span className="abbr">{m.awayTeam.tla}</span>
                         <span className="tn">{m.awayTeam.shortName}</span>
-                        {finished && <span className="tag ft">FT</span>}
-                        {live && <span className="tag lv">Live</span>}
                       </div>
                     </div>
                   );
