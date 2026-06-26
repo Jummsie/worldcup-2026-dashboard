@@ -40,17 +40,9 @@ interface ApiData {
   matches: Match[];
 }
 
-const TABS = ["standings", "fixtures", "goals", "bracket", "scorers", "assists", "keepers", "myteam"] as const;
+const TABS = ["standings", "fixtures", "goals", "bracket", "scorers", "assists", "myteam"] as const;
 type Tab = typeof TABS[number];
 
-const GLOVE_FAVOURITES = [
-  ["Emiliano Martínez", "Argentina", "+450 · defending winner"],
-  ["Unai Simón", "Spain", "co-favourite"],
-  ["Alisson", "Brazil", "title contender"],
-  ["Thibaut Courtois", "Belgium", "elite shot-stopper"],
-  ["Jordan Pickford", "England", "England No.1"],
-  ["Matt Turner", "USA", "host-nation hope"],
-];
 
 const POLL_LIVE = 30_000;
 const POLL_IDLE = 60_000;
@@ -208,8 +200,8 @@ export default function Dashboard() {
   // Keystats
   const topGoals = scorers[0]?.goals ?? 0;
   const topScorers = scorers.filter((s) => s.goals === topGoals);
-  const onTwoGoals = scorers.filter((s) => s.goals === 2);
-  const messiGoals = scorers.find((s) => s.player.name.includes("Messi"))?.goals;
+  const secondGoals = scorers.find((s) => s.goals < topGoals)?.goals ?? 0;
+  const onSecondGoals = secondGoals > 0 ? scorers.filter((s) => s.goals === secondGoals) : [];
 
   const anyLiveNow = data?.matches.some((m) => isLive(m.status));
 
@@ -244,7 +236,6 @@ export default function Dashboard() {
                   {t === "bracket" && "Bracket"}
                   {t === "scorers" && "Top Scorers"}
                   {t === "assists" && "Assists"}
-                  {t === "keepers" && "Goalkeepers"}
                   {t === "myteam" && "My Team"}
                 </button>
               ))}
@@ -443,9 +434,9 @@ export default function Dashboard() {
                 <div className="who">{topScorers.map((s) => s.player.name).join(" & ")}</div>
               </div>
               <div className="kstat">
-                <div className="big">{onTwoGoals.length}</div>
-                <div className="lbl">Players on 2 Goals</div>
-                <div className="who">{onTwoGoals.slice(0, 3).map((s) => s.player.name.split(" ").pop()).join(", ")}…</div>
+                <div className="big">{onSecondGoals.length}</div>
+                <div className="lbl">Players on {secondGoals} Goals</div>
+                <div className="who">{onSecondGoals.slice(0, 3).map((s) => s.player.name.split(" ").pop()).join(", ")}{onSecondGoals.length > 3 ? "…" : ""}</div>
               </div>
               <div className="kstat">
                 <div className="big">{topScorers.length}</div>
@@ -818,46 +809,6 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* GOALKEEPERS */}
-      <div className={`section${tab === "keepers" ? " show" : ""}`}>
-        <div className="wrap">
-          <h2 className="sectitle">Between the Sticks</h2>
-          <p className="secnote">The Golden Glove is chosen by FIFA's panel, not a single stat — but saves tell the story</p>
-          <div className="board-grid">
-            <div className="board">
-              <div className="board-h">
-                <h3>Golden Glove Favourites</h3>
-                <span className="award">Best Goalkeeper</span>
-              </div>
-              <p className="board-note">Bookmakers' shortlist · live odds</p>
-              {GLOVE_FAVOURITES.map(([name, team, note], i) => (
-                <div className={`row${i === 0 ? " top" : ""}`} key={name}>
-                  <div className="rank">{i + 1}</div>
-                  <div className="pinfo">
-                    <div className="pname">{name}</div>
-                    <div className="pteam">{team}</div>
-                  </div>
-                  <div className="stat" style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: "var(--mut)", textAlign: "right", maxWidth: 120 }}>
-                    {note}
-                  </div>
-                </div>
-              ))}
-            </div>
-            <div className="board">
-              <div className="board-h">
-                <h3>Why Saves Matter</h3>
-                <span className="award">Context</span>
-              </div>
-              <p className="board-note">Save totals lean on how exposed a defence is</p>
-              <p style={{ fontSize: 14, color: "var(--mut)", lineHeight: 1.75 }}>
-                A save counts only when a shot heading into the net is stopped. Keepers behind busy defences rack up
-                the biggest totals, while title-chasers win the Golden Glove on clean sheets and clutch knockout
-                saves — in four of the last five World Cups it went to a player from the champion nation.
-              </p>
-            </div>
-          </div>
-        </div>
-      </div>
 
       <footer>
         <div className="wrap">
