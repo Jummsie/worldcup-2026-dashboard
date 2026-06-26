@@ -98,6 +98,7 @@ export default function Dashboard() {
   /* ── Derived data ── */
   const groupEntries = Object.entries(data?.groupMap ?? {}).sort(([a], [b]) => a.localeCompare(b));
 
+
   // Bracket
   const allMatches = data?.matches ?? [];
 
@@ -319,9 +320,9 @@ export default function Dashboard() {
                 <div className="fxdate live-date-label">🟢 LIVE NOW</div>
                 {allMatches.filter((m) => isLive(m.status)).map((m) => (
                   <div className="fx live-m" key={m.id}>
-                    <div className="side home">{m.homeTeam.shortName}<span className="abbr">{m.homeTeam.tla}</span></div>
+                    <div className="side home"><span className="tn">{m.homeTeam.shortName}</span><span className="abbr">{m.homeTeam.tla}</span></div>
                     <div className="sc">{m.score.fullTime.home ?? 0} – {m.score.fullTime.away ?? 0}</div>
-                    <div className="side away">{m.awayTeam.shortName}<span className="abbr">{m.awayTeam.tla}</span></div>
+                    <div className="side away"><span className="abbr">{m.awayTeam.tla}</span><span className="tn">{m.awayTeam.shortName}</span></div>
                   </div>
                 ))}
               </div>
@@ -335,7 +336,7 @@ export default function Dashboard() {
                   return (
                     <div className={`fx${live ? " live-m" : ""}`} key={m.id}>
                       <div className="side home">
-                        {m.homeTeam.shortName}
+                        <span className="tn">{m.homeTeam.shortName}</span>
                         <span className="abbr">{m.homeTeam.tla}</span>
                       </div>
                       {finished || live ? (
@@ -347,7 +348,7 @@ export default function Dashboard() {
                       )}
                       <div className="side away">
                         <span className="abbr">{m.awayTeam.tla}</span>
-                        {m.awayTeam.shortName}
+                        <span className="tn">{m.awayTeam.shortName}</span>
                         {finished && <span className="tag ft">FT</span>}
                         {live && <span className="tag lv">Live</span>}
                       </div>
