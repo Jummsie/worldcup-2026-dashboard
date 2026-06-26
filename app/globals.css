@@ -277,9 +277,10 @@ table { width: 100%; border-collapse: collapse; table-layout: fixed; }
   transition: border-color .2s;
 }
 .fx:hover { border-color: var(--line2); }
-.fx .side { flex: 1; display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 14px; min-width: 0; }
+.fx .side { flex: 1; display: flex; align-items: center; gap: 6px; font-weight: 600; font-size: 14px; min-width: 0; }
 .fx .side.away { justify-content: flex-end; text-align: right; }
 .fx .side span.tn { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 480px) { .fx .side .abbr { display: none; } .fx .side { font-size: 13px; } }
 .fx .sc {
   font-family: 'Oswald', sans-serif;
   font-weight: 600;
