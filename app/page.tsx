@@ -42,6 +42,7 @@ interface ApiData {
 
 const TABS = ["standings", "fixtures", "goals", "bracket", "scorers", "assists", "myteam"] as const;
 type Tab = typeof TABS[number];
+type PickKey = `${number}-${number}`;
 
 
 const POLL_LIVE = 30_000;
@@ -64,6 +65,14 @@ export default function Dashboard() {
   const [lastUpdated, setLastUpdated] = useState("");
   const [tab, setTab] = useState<Tab>("standings");
   const [selectedTeam, setSelectedTeam] = useState<string>("");
+  const [bracketPicks, setBracketPicks] = useState<Record<PickKey, Team>>({});
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('wc26bp');
+      if (saved) setBracketPicks(JSON.parse(saved));
+    } catch {}
+  }, []);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const fetchData = useCallback(async () => {
@@ -115,26 +124,79 @@ export default function Dashboard() {
   const sf   = allMatches.filter((m) => m.stage === "SEMI_FINALS");
   const fin  = allMatches.filter((m) => m.stage === "FINAL");
 
-  function MatchupCard({ m }: { m?: Match }) {
+  // ── Bracket predictor helpers ──
+  function getBracketWinner(roundIdx: number, matchIdx: number, rounds: Match[][]): Team | null {
+    const m = rounds[roundIdx]?.[matchIdx];
+    if (m && isFinished(m.status)) {
+      const hg = m.score.fullTime.home ?? 0, ag = m.score.fullTime.away ?? 0;
+      return hg > ag ? m.homeTeam : ag > hg ? m.awayTeam : null;
+    }
+    return bracketPicks[`${roundIdx}-${matchIdx}` as PickKey] ?? null;
+  }
+
+  function resolveTeam(roundIdx: number, matchIdx: number, isHome: boolean, rounds: Match[][]): Team | null {
+    const m = rounds[roundIdx]?.[matchIdx];
+    if (m) {
+      const raw = isHome ? m.homeTeam : m.awayTeam;
+      if (raw?.shortName && raw.shortName !== "TBD") return raw;
+    }
+    if (roundIdx === 0) return null;
+    const prevMatchIdx = matchIdx * 2 + (isHome ? 0 : 1);
+    return getBracketWinner(roundIdx - 1, prevMatchIdx, rounds);
+  }
+
+  function doPick(roundIdx: number, matchIdx: number, team: Team, rounds: Match[][]) {
+    const key = `${roundIdx}-${matchIdx}` as PickKey;
+    const old = bracketPicks[key];
+    const newPicks: Record<PickKey, Team> = { ...bracketPicks, [key]: team };
+    if (old && old.tla !== team.tla) {
+      let nextIdx = Math.floor(matchIdx / 2);
+      for (let nr = roundIdx + 1; nr < 5; nr++) {
+        const nk = `${nr}-${nextIdx}` as PickKey;
+        if (newPicks[nk]?.tla === old.tla) { delete newPicks[nk]; nextIdx = Math.floor(nextIdx / 2); }
+        else break;
+      }
+    }
+    setBracketPicks(newPicks);
+    localStorage.setItem('wc26bp', JSON.stringify(newPicks));
+  }
+
+  function MatchupCard({ m, roundIdx, matchIdx, rounds }: { m?: Match; roundIdx: number; matchIdx: number; rounds: Match[][] }) {
     const finished = m ? isFinished(m.status) : false;
     const live     = m ? isLive(m.status) : false;
     const hs = m?.score.fullTime.home ?? null;
     const as_ = m?.score.fullTime.away ?? null;
+
+    const homeTeam = resolveTeam(roundIdx, matchIdx, true, rounds);
+    const awayTeam = resolveTeam(roundIdx, matchIdx, false, rounds);
+    const pick = bracketPicks[`${roundIdx}-${matchIdx}` as PickKey];
+
+    const homeName = homeTeam?.shortName ?? "TBD";
+    const awayName = awayTeam?.shortName ?? "TBD";
+    const homeTbd = !homeTeam;
+    const awayTbd = !awayTeam;
+
     const homeWon = finished && hs !== null && as_ !== null && hs > as_;
     const awayWon = finished && hs !== null && as_ !== null && as_ > hs;
-    const homeName = m?.homeTeam?.shortName ?? "TBD";
-    const awayName = m?.awayTeam?.shortName ?? "TBD";
-    const homeTbd = homeName === "TBD";
-    const awayTbd = awayName === "TBD";
+    const homePicked = !finished && !live && pick?.tla === homeTeam?.tla;
+    const awayPicked = !finished && !live && pick?.tla === awayTeam?.tla;
+    const canPick = !finished && !live && !!homeTeam && !!awayTeam;
+
     return (
       <div className="bmatch-group">
         {m && <div className="bmatch-date">{fmtDate(m.utcDate)}</div>}
-        <div className={`bteam${homeTbd ? " tbd" : homeWon ? " winner" : finished ? " loser" : ""}`}>
+        <div
+          className={`bteam${homeTbd ? " tbd" : homeWon || homePicked ? " winner" : finished ? " loser" : ""}${canPick && !homeTbd ? " pickable" : ""}`}
+          onClick={() => canPick && homeTeam && doPick(roundIdx, matchIdx, homeTeam, rounds)}
+        >
           {homeName}
           {(finished || live) && hs !== null && <span className="bscore">{hs}</span>}
         </div>
         <div className="bteam-divider" />
-        <div className={`bteam${awayTbd ? " tbd" : awayWon ? " winner" : finished ? " loser" : ""}`}>
+        <div
+          className={`bteam${awayTbd ? " tbd" : awayWon || awayPicked ? " winner" : finished ? " loser" : ""}${canPick && !awayTbd ? " pickable" : ""}`}
+          onClick={() => canPick && awayTeam && doPick(roundIdx, matchIdx, awayTeam, rounds)}
+        >
           {awayName}
           {(finished || live) && as_ !== null && <span className="bscore">{as_}</span>}
         </div>
@@ -142,9 +204,8 @@ export default function Dashboard() {
     );
   }
 
-  function BracketRound({ matches, count, label }: { matches: Match[]; count: number; label: string }) {
+  function BracketRound({ matches, count, label, roundIdx, rounds }: { matches: Match[]; count: number; label: string; roundIdx: number; rounds: Match[][] }) {
     const items: (Match | undefined)[] = matches.length ? matches : Array(count).fill(undefined);
-    // Group into pairs for connector lines
     const pairs: (Match | undefined)[][] = [];
     for (let i = 0; i < items.length; i += 2) pairs.push([items[i], items[i + 1]]);
     return (
@@ -155,7 +216,7 @@ export default function Dashboard() {
             <div key={pi} className="bracket-pair">
               {pair.map((m, mi) => (
                 <div key={mi} className="bracket-pair-item">
-                  <MatchupCard m={m} />
+                  <MatchupCard m={m} roundIdx={roundIdx} matchIdx={pi * 2 + mi} rounds={rounds} />
                 </div>
               ))}
               {pair.length === 2 && <div className="bracket-pair-vline" />}
@@ -387,37 +448,66 @@ export default function Dashboard() {
           <h2 className="sectitle">Knockout Bracket</h2>
           <p className="secnote">First-ever Round of 32 in the 48-team format · final at MetLife Stadium, 19 July</p>
           <div className="bracket-intro">
-            The bracket fills in once the group stage finishes. With matchdays still being played, the 32 qualifiers
-            aren't locked yet — but here's the road to the final every team is chasing.
+            Completed matches show real results. For upcoming fixtures where both teams are known, click a team to predict the winner — your picks cascade forward automatically.
           </div>
           {!data ? (
             <div className="loading">Loading…</div>
-          ) : (
-            <div className="bracket-scroll">
-              <div className="rounds">
-                <BracketRound matches={r32} count={16} label="Round of 32" />
-                <BracketRound matches={r16} count={8}  label="Round of 16" />
-                <BracketRound matches={qf}  count={4}  label="Quarter-finals" />
-                <BracketRound matches={sf}  count={2}  label="Semi-finals" />
-                <div className="rnd">
-                  <h4>Final</h4>
-                  <div className="rnd-matches">
-                    {fin.length ? (
+          ) : (() => {
+            const rounds = [r32, r16, qf, sf, fin];
+            const champion = getBracketWinner(4, 0, rounds) ?? (fin.length && isFinished(fin[0].status) ? getBracketWinner(4, 0, rounds) : null);
+            const hasPicks = Object.keys(bracketPicks).length > 0;
+            return (<>
+              {hasPicks && (
+                <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
+                  <button className="bracket-reset-btn" onClick={() => { setBracketPicks({}); localStorage.removeItem('wc26bp'); }}>
+                    Reset my picks
+                  </button>
+                </div>
+              )}
+              <div className="bracket-scroll">
+                <div className="rounds">
+                  <BracketRound matches={r32} count={16} label="Round of 32" roundIdx={0} rounds={rounds} />
+                  <BracketRound matches={r16} count={8}  label="Round of 16" roundIdx={1} rounds={rounds} />
+                  <BracketRound matches={qf}  count={4}  label="Quarter-finals" roundIdx={2} rounds={rounds} />
+                  <BracketRound matches={sf}  count={2}  label="Semi-finals" roundIdx={3} rounds={rounds} />
+                  <div className="rnd">
+                    <h4>Final</h4>
+                    <div className="rnd-matches">
                       <div className="bracket-pair">
-                        <div className="bracket-pair-item"><MatchupCard m={fin[0]} /></div>
+                        <div className="bracket-pair-item">
+                          <MatchupCard m={fin[0]} roundIdx={4} matchIdx={0} rounds={rounds} />
+                        </div>
                       </div>
-                    ) : (
-                      <div className="bracket-champion">
-                        <div className="trophy-icon">🏆</div>
-                        <div className="champ-label">Champion 2026</div>
-                        <div className="champ-name">19 July · MetLife</div>
-                      </div>
-                    )}
+                    </div>
+                  </div>
+                  <div className="rnd">
+                    <h4>Champion</h4>
+                    <div className="rnd-matches">
+                      {(() => {
+                        const champ = getBracketWinner(4, 0, rounds);
+                        return (
+                          <div className="bracket-champion">
+                            <div className="trophy-icon">🏆</div>
+                            {champ ? (
+                              <>
+                                <div className="champ-label">Your Pick</div>
+                                <div className="champ-name" style={{ color: "var(--green)", fontWeight: 700, fontSize: 14 }}>{champ.shortName}</div>
+                              </>
+                            ) : (
+                              <>
+                                <div className="champ-label">Champion 2026</div>
+                                <div className="champ-name">19 July · MetLife</div>
+                              </>
+                            )}
+                          </div>
+                        );
+                      })()}
+                    </div>
                   </div>
                 </div>
               </div>
-            </div>
-          )}
+            </>);
+          })()}
         </div>
       </div>
 
