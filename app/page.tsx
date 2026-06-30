@@ -226,7 +226,6 @@ export default function Dashboard() {
 
   const matchesByDate: Record<string, Match[]> = {};
   (data?.matches ?? [])
-    .filter((m) => m.stage === "GROUP_STAGE")
     .forEach((m) => {
       const d = fmtDate(m.utcDate);
       (matchesByDate[d] ??= []).push(m);
@@ -359,7 +358,7 @@ export default function Dashboard() {
       <div className={`section${tab === "fixtures" ? " show" : ""}`}>
         <div className="wrap">
           <h2 className="sectitle">Fixtures &amp; Results</h2>
-          <p className="secnote">Final scores and upcoming matches</p>
+          <p className="secnote">Group stage, Round of 32 and knockout fixtures</p>
           {!data ? (
             <div className="loading">Loading fixtures…</div>
           ) : (<>
