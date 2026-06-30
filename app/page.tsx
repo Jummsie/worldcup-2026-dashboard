@@ -136,13 +136,10 @@ export default function Dashboard() {
 
   function resolveTeam(roundIdx: number, matchIdx: number, isHome: boolean, rounds: Match[][]): Team | null {
     const m = rounds[roundIdx]?.[matchIdx];
-    if (m) {
-      const raw = isHome ? m.homeTeam : m.awayTeam;
-      if (raw?.shortName && raw.shortName !== "TBD") return raw;
-    }
-    if (roundIdx === 0) return null;
-    const prevMatchIdx = matchIdx * 2 + (isHome ? 0 : 1);
-    return getBracketWinner(roundIdx - 1, prevMatchIdx, rounds);
+    if (!m) return null;
+    const raw = isHome ? m.homeTeam : m.awayTeam;
+    if (raw?.shortName && raw.shortName !== "TBD") return raw;
+    return null;
   }
 
   function doPick(roundIdx: number, matchIdx: number, team: Team, rounds: Match[][]) {
