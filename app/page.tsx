@@ -42,11 +42,10 @@ interface ApiData {
 
 const TABS = ["standings", "fixtures", "goals", "bracket", "scorers", "assists", "myteam"] as const;
 type Tab = typeof TABS[number];
-type PickKey = `${number}-${number}`;
-
 
 const POLL_LIVE = 30_000;
 const POLL_IDLE = 60_000;
+
 
 function fmtDate(utc: string) {
   return new Date(utc).toLocaleDateString("en-GB", {
@@ -65,14 +64,16 @@ export default function Dashboard() {
   const [lastUpdated, setLastUpdated] = useState("");
   const [tab, setTab] = useState<Tab>("standings");
   const [selectedTeam, setSelectedTeam] = useState<string>("");
-  const [bracketPicks, setBracketPicks] = useState<Record<PickKey, Team>>({});
+  const [myPicksView, setMyPicksView] = useState<"live" | "picks">("live");
+  const [myPicks, setMyPicks] = useState<Record<string, string>>({});
 
   useEffect(() => {
     try {
-      const saved = localStorage.getItem('wc26bp');
-      if (saved) setBracketPicks(JSON.parse(saved));
+      const saved = localStorage.getItem('wc26mp');
+      if (saved) setMyPicks(JSON.parse(saved));
     } catch {}
   }, []);
+
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const fetchData = useCallback(async () => {
@@ -98,13 +99,8 @@ export default function Dashboard() {
 
   /* ── Derived data ── */
   const groupEntries = Object.entries(data?.groupMap ?? {}).sort(([a], [b]) => a.localeCompare(b));
-
-
-  // Bracket
   const allMatches = data?.matches ?? [];
 
-  // Smart dropdown: once knockout has started, only show teams still in the tournament.
-  // A team is eliminated if they lost a finished knockout match.
   const knockoutMatches = allMatches.filter((m) => m.stage !== "GROUP_STAGE");
   const knockoutStarted = knockoutMatches.some((m) => isFinished(m.status) || isLive(m.status));
   const eliminatedTLAs = new Set<string>();
@@ -112,96 +108,97 @@ export default function Dashboard() {
     knockoutMatches.filter((m) => isFinished(m.status)).forEach((m) => {
       const hg = m.score.fullTime.home ?? 0;
       const ag = m.score.fullTime.away ?? 0;
-      if (hg !== ag) {
-        eliminatedTLAs.add(hg < ag ? m.homeTeam.tla : m.awayTeam.tla);
-      }
-      // Penalty shootout — winner is in score.penalties if available
+      if (hg !== ag) eliminatedTLAs.add(hg < ag ? m.homeTeam.tla : m.awayTeam.tla);
     });
   }
-  const r32  = allMatches.filter((m) => m.stage === "LAST_32");
-  const r16  = allMatches.filter((m) => m.stage === "LAST_16");
-  const qf   = allMatches.filter((m) => m.stage === "QUARTER_FINALS");
-  const sf   = allMatches.filter((m) => m.stage === "SEMI_FINALS");
-  const fin  = allMatches.filter((m) => m.stage === "FINAL");
 
-  // ── Bracket predictor helpers ──
-  function getBracketWinner(roundIdx: number, matchIdx: number, rounds: Match[][]): Team | null {
-    const m = rounds[roundIdx]?.[matchIdx];
-    if (m && isFinished(m.status)) {
+  const r32 = allMatches.filter((m) => m.stage === "LAST_32");
+  const r16 = allMatches.filter((m) => m.stage === "LAST_16");
+  const qf  = allMatches.filter((m) => m.stage === "QUARTER_FINALS");
+  const sf  = allMatches.filter((m) => m.stage === "SEMI_FINALS");
+  const fin = allMatches.filter((m) => m.stage === "FINAL");
+
+  // My Picks: derive R32 display order from the actual R16 bracket data.
+  // Sort R32 and R16 by match ID (sequential per FIFA numbering).
+  // For each R16 slot, find which R32 winners feed it by matching confirmed teams.
+  // Remaining (unfinished) R32 matches are assigned to remaining R16 slots in ID order.
+  // This groups consecutive R32 display pairs to feed the correct R16 slot, so the
+  // simple Math.floor(idx/2) cascade formula holds for all subsequent rounds.
+  const r32ById = [...r32].sort((a, b) => a.id - b.id);
+  const r16ById = [...r16].sort((a, b) => a.id - b.id);
+  const winnerToR32Idx: Record<string, number> = {};
+  r32ById.forEach((m, i) => {
+    if (isFinished(m.status)) {
       const hg = m.score.fullTime.home ?? 0, ag = m.score.fullTime.away ?? 0;
-      return hg > ag ? m.homeTeam : ag > hg ? m.awayTeam : null;
+      if (hg !== ag) winnerToR32Idx[hg > ag ? m.homeTeam.tla : m.awayTeam.tla] = i;
     }
-    return bracketPicks[`${roundIdx}-${matchIdx}` as PickKey] ?? null;
+  });
+  const usedR32Indices = new Set<number>();
+  const picksDisplayOrder: number[] = [];
+  for (const m16 of r16ById) {
+    const hi = winnerToR32Idx[m16.homeTeam?.tla ?? ""] ?? -1;
+    const ai = winnerToR32Idx[m16.awayTeam?.tla ?? ""] ?? -1;
+    const avail = () => r32ById.map((_, i) => i).filter(i => !usedR32Indices.has(i));
+    let homeR32 = (hi >= 0 && !usedR32Indices.has(hi)) ? hi : (avail().find(i => i !== ai) ?? -1);
+    let awayR32 = (ai >= 0 && !usedR32Indices.has(ai)) ? ai : (avail().find(i => i !== homeR32) ?? -1);
+    if (homeR32 >= 0) usedR32Indices.add(homeR32);
+    if (awayR32 >= 0) usedR32Indices.add(awayR32);
+    picksDisplayOrder.push(homeR32, awayR32);
+  }
+  const r32ForPicks = picksDisplayOrder.map(i => r32ById[i]).filter((m): m is Match => !!m);
+
+  function getMyPickTeam(round: number, matchIdx: number, isHome: boolean): string | null {
+    if (round === 0) {
+      const m = r32ForPicks[matchIdx];
+      if (!m) return null;
+      const t = isHome ? m.homeTeam : m.awayTeam;
+      return t?.shortName && t.shortName !== "TBD" ? t.shortName : null;
+    }
+    const prevMatch = matchIdx * 2 + (isHome ? 0 : 1);
+    return myPicks[`${round - 1}-${prevMatch}`] ?? null;
   }
 
-  function resolveTeam(roundIdx: number, matchIdx: number, isHome: boolean, rounds: Match[][]): Team | null {
-    const m = rounds[roundIdx]?.[matchIdx];
-    if (!m) return null;
-    const raw = isHome ? m.homeTeam : m.awayTeam;
-    if (raw?.shortName && raw.shortName !== "TBD") return raw;
-    return null;
-  }
-
-  function doPick(roundIdx: number, matchIdx: number, team: Team, rounds: Match[][]) {
-    const key = `${roundIdx}-${matchIdx}` as PickKey;
-    const old = bracketPicks[key];
-    const newPicks: Record<PickKey, Team> = { ...bracketPicks, [key]: team };
-    if (old && old.tla !== team.tla) {
-      let nextIdx = Math.floor(matchIdx / 2);
-      for (let nr = roundIdx + 1; nr < 5; nr++) {
-        const nk = `${nr}-${nextIdx}` as PickKey;
-        if (newPicks[nk]?.tla === old.tla) { delete newPicks[nk]; nextIdx = Math.floor(nextIdx / 2); }
+  function doMyPick(round: number, matchIdx: number, team: string) {
+    const key = `${round}-${matchIdx}`;
+    const old = myPicks[key];
+    const np = { ...myPicks, [key]: team };
+    if (old && old !== team) {
+      let ni = Math.floor(matchIdx / 2);
+      for (let nr = round + 1; nr <= 4; nr++) {
+        const nk = `${nr}-${ni}`;
+        if (np[nk] === old) { delete np[nk]; ni = Math.floor(ni / 2); }
         else break;
       }
     }
-    setBracketPicks(newPicks);
-    localStorage.setItem('wc26bp', JSON.stringify(newPicks));
+    setMyPicks(np);
+    localStorage.setItem('wc26mp', JSON.stringify(np));
   }
 
-  function MatchupCard({ m, roundIdx, matchIdx, rounds }: { m?: Match; roundIdx: number; matchIdx: number; rounds: Match[][] }) {
+  /* ── Live bracket components (read-only) ── */
+  function LiveMatchupCard({ m }: { m?: Match }) {
     const finished = m ? isFinished(m.status) : false;
     const live     = m ? isLive(m.status) : false;
     const hs = m?.score.fullTime.home ?? null;
     const as_ = m?.score.fullTime.away ?? null;
-
-    const homeTeam = resolveTeam(roundIdx, matchIdx, true, rounds);
-    const awayTeam = resolveTeam(roundIdx, matchIdx, false, rounds);
-    const pick = bracketPicks[`${roundIdx}-${matchIdx}` as PickKey];
-
-    const homeName = homeTeam?.shortName ?? "TBD";
-    const awayName = awayTeam?.shortName ?? "TBD";
-    const homeTbd = !homeTeam;
-    const awayTbd = !awayTeam;
-
+    const homeName = m?.homeTeam?.shortName && m.homeTeam.shortName !== "TBD" ? m.homeTeam.shortName : "TBD";
+    const awayName = m?.awayTeam?.shortName && m.awayTeam.shortName !== "TBD" ? m.awayTeam.shortName : "TBD";
     const homeWon = finished && hs !== null && as_ !== null && hs > as_;
     const awayWon = finished && hs !== null && as_ !== null && as_ > hs;
-    const homePicked = !finished && !live && pick?.tla === homeTeam?.tla;
-    const awayPicked = !finished && !live && pick?.tla === awayTeam?.tla;
-    const canPick = !finished && !live && !!homeTeam && !!awayTeam;
-
     return (
       <div className="bmatch-group">
         {m && <div className="bmatch-date">{fmtDate(m.utcDate)}</div>}
-        <div
-          className={`bteam${homeTbd ? " tbd" : homeWon || homePicked ? " winner" : finished ? " loser" : ""}${canPick && !homeTbd ? " pickable" : ""}`}
-          onClick={() => canPick && homeTeam && doPick(roundIdx, matchIdx, homeTeam, rounds)}
-        >
-          {homeName}
-          {(finished || live) && hs !== null && <span className="bscore">{hs}</span>}
+        <div className={`bteam${homeName === "TBD" ? " tbd" : homeWon ? " winner" : finished ? " loser" : ""}`}>
+          {homeName}{(finished || live) && hs !== null && <span className="bscore">{hs}</span>}
         </div>
         <div className="bteam-divider" />
-        <div
-          className={`bteam${awayTbd ? " tbd" : awayWon || awayPicked ? " winner" : finished ? " loser" : ""}${canPick && !awayTbd ? " pickable" : ""}`}
-          onClick={() => canPick && awayTeam && doPick(roundIdx, matchIdx, awayTeam, rounds)}
-        >
-          {awayName}
-          {(finished || live) && as_ !== null && <span className="bscore">{as_}</span>}
+        <div className={`bteam${awayName === "TBD" ? " tbd" : awayWon ? " winner" : finished ? " loser" : ""}`}>
+          {awayName}{(finished || live) && as_ !== null && <span className="bscore">{as_}</span>}
         </div>
       </div>
     );
   }
 
-  function BracketRound({ matches, count, label, roundIdx, rounds }: { matches: Match[]; count: number; label: string; roundIdx: number; rounds: Match[][] }) {
+  function LiveBracketRound({ matches, count, label }: { matches: Match[]; count: number; label: string }) {
     const items: (Match | undefined)[] = matches.length ? matches : Array(count).fill(undefined);
     const pairs: (Match | undefined)[][] = [];
     for (let i = 0; i < items.length; i += 2) pairs.push([items[i], items[i + 1]]);
@@ -213,7 +210,7 @@ export default function Dashboard() {
             <div key={pi} className="bracket-pair">
               {pair.map((m, mi) => (
                 <div key={mi} className="bracket-pair-item">
-                  <MatchupCard m={m} roundIdx={roundIdx} matchIdx={pi * 2 + mi} rounds={rounds} />
+                  <LiveMatchupCard m={m} />
                 </div>
               ))}
               {pair.length === 2 && <div className="bracket-pair-vline" />}
@@ -224,16 +221,79 @@ export default function Dashboard() {
     );
   }
 
+  /* ── My Picks components ── */
+  function MyPickCard({ round, matchIdx }: { round: number; matchIdx: number }) {
+    const homeTeam = getMyPickTeam(round, matchIdx, true);
+    const awayTeam = getMyPickTeam(round, matchIdx, false);
+    const pick = myPicks[`${round}-${matchIdx}`];
+    const homeTbd = !homeTeam;
+    const awayTbd = !awayTeam;
+    const homePicked = pick === homeTeam && !homeTbd;
+    const awayPicked = pick === awayTeam && !awayTbd;
+    const canPick = !homeTbd && !awayTbd;
+    return (
+      <div className="bmatch-group">
+        <div
+          className={`bteam${homeTbd ? " tbd" : homePicked ? " winner" : ""}${canPick && !homeTbd ? " pickable" : ""}`}
+          onClick={() => canPick && homeTeam && doMyPick(round, matchIdx, homeTeam)}
+        >
+          {homeTeam ?? "TBD"}
+        </div>
+        <div className="bteam-divider" />
+        <div
+          className={`bteam${awayTbd ? " tbd" : awayPicked ? " winner" : ""}${canPick && !awayTbd ? " pickable" : ""}`}
+          onClick={() => canPick && awayTeam && doMyPick(round, matchIdx, awayTeam)}
+        >
+          {awayTeam ?? "TBD"}
+        </div>
+      </div>
+    );
+  }
+
+  function MyPicksRound({ count, label, round }: { count: number; label: string; round: number }) {
+    if (count === 1) {
+      return (
+        <div className="rnd">
+          <h4>{label}</h4>
+          <div className="rnd-matches">
+            <div className="bracket-pair">
+              <div className="bracket-pair-item"><MyPickCard round={round} matchIdx={0} /></div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+    const pairs: [number, number][] = [];
+    for (let i = 0; i < count; i += 2) pairs.push([i, i + 1]);
+    return (
+      <div className="rnd">
+        <h4>{label}</h4>
+        <div className="rnd-matches">
+          {pairs.map(([a, b], pi) => (
+            <div key={pi} className="bracket-pair">
+              <div className="bracket-pair-item"><MyPickCard round={round} matchIdx={a} /></div>
+              <div className="bracket-pair-item"><MyPickCard round={round} matchIdx={b} /></div>
+              <div className="bracket-pair-vline" />
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  /* ── Fixtures data ── */
   const matchesByDate: Record<string, Match[]> = {};
-  (data?.matches ?? [])
-    .forEach((m) => {
-      const d = fmtDate(m.utcDate);
-      (matchesByDate[d] ??= []).push(m);
-    });
-  const sortedDates = Object.keys(matchesByDate).sort(
+  (data?.matches ?? []).forEach((m) => {
+    const d = fmtDate(m.utcDate);
+    (matchesByDate[d] ??= []).push(m);
+  });
+  const allSortedDates = Object.keys(matchesByDate).sort(
     (a, b) => new Date(matchesByDate[a][0].utcDate).getTime() - new Date(matchesByDate[b][0].utcDate).getTime()
   );
+  const knockoutFixtureDates = allSortedDates.filter(d => matchesByDate[d].some(m => m.stage !== "GROUP_STAGE"));
+  const groupStageDates = allSortedDates.filter(d => matchesByDate[d].every(m => m.stage === "GROUP_STAGE"));
 
+  /* ── Stats ── */
   const teamGoalMap: Record<string, { name: string; tla: string; goals: number }> = {};
   (data?.matches ?? []).filter((m) => isFinished(m.status) || isLive(m.status)).forEach((m) => {
     const hg = m.score.fullTime.home ?? 0;
@@ -254,13 +314,45 @@ export default function Dashboard() {
     .filter((s) => (s.assists ?? 0) > 0)
     .sort((a, b) => (b.assists ?? 0) - (a.assists ?? 0));
 
-  // Keystats
   const topGoals = scorers[0]?.goals ?? 0;
   const topScorers = scorers.filter((s) => s.goals === topGoals);
   const secondGoals = scorers.find((s) => s.goals < topGoals)?.goals ?? 0;
   const onSecondGoals = secondGoals > 0 ? scorers.filter((s) => s.goals === secondGoals) : [];
 
   const anyLiveNow = data?.matches.some((m) => isLive(m.status));
+
+  function FixtureDay({ date }: { date: string }) {
+    return (
+      <div className="fxday" key={date}>
+        <div className="fxdate">{date}</div>
+        {matchesByDate[date].map((m) => {
+          const live = isLive(m.status);
+          const finished = isFinished(m.status);
+          return (
+            <div className={`fx${live ? " live-m" : ""}`} key={m.id}>
+              <div className="side home">
+                <span className="tn">{m.homeTeam.shortName}</span>
+                <span className="abbr">{m.homeTeam.tla}</span>
+              </div>
+              {finished || live ? (
+                <div className="sc">
+                  {m.score.fullTime.home ?? 0} – {m.score.fullTime.away ?? 0}
+                  {finished && <div className="sc-tag">FT</div>}
+                  {live && <div className="sc-tag lv">Live</div>}
+                </div>
+              ) : (
+                <div className="when">{fmtTime(m.utcDate)}</div>
+              )}
+              <div className="side away">
+                <span className="abbr">{m.awayTeam.tla}</span>
+                <span className="tn">{m.awayTeam.shortName}</span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
 
   return (
     <>
@@ -269,7 +361,7 @@ export default function Dashboard() {
           <div className="hero">
             <div className="eyebrow">
               <span className="live-dot" />
-              {anyLiveNow ? "Live · Match in progress" : "Live · Group Stage"}
+              {anyLiveNow ? "Live · Match in progress" : "Live · Knockout Stage"}
               {lastUpdated && <span className="refresh-badge">Updated {lastUpdated}</span>}
             </div>
             <h1>World Cup<span className="l2">2026</span></h1>
@@ -305,7 +397,7 @@ export default function Dashboard() {
       <div className={`section${tab === "standings" ? " show" : ""}`}>
         <div className="wrap">
           <h2 className="sectitle">Group Standings</h2>
-          <p className="secnote">Top 2 of each group + 8 best third-placed teams advance to Round of 32</p>
+          <p className="secnote">Final group stage standings — top 2 of each group + 8 best third-placed teams advanced to Round of 32</p>
           {error && <div className="error-box">⚠ {error} — showing last known data</div>}
           {!data ? (
             <div className="loading">Loading standings…</div>
@@ -349,7 +441,7 @@ export default function Dashboard() {
             </div>
           )}
           <div className="legend">
-            <span className="swatch" /> Currently in a top-two qualifying position
+            <span className="swatch" /> Top-two qualifying position
           </div>
         </div>
       </div>
@@ -358,7 +450,7 @@ export default function Dashboard() {
       <div className={`section${tab === "fixtures" ? " show" : ""}`}>
         <div className="wrap">
           <h2 className="sectitle">Fixtures &amp; Results</h2>
-          <p className="secnote">Group stage, Round of 32 and knockout fixtures</p>
+          <p className="secnote">Knockout stage · group stage results below</p>
           {!data ? (
             <div className="loading">Loading fixtures…</div>
           ) : (<>
@@ -375,36 +467,19 @@ export default function Dashboard() {
                 ))}
               </div>
             )}
-            {sortedDates.map((date) => (
-              <div className="fxday" key={date}>
-                <div className="fxdate">{date}</div>
-                {matchesByDate[date].map((m) => {
-                  const live = isLive(m.status);
-                  const finished = isFinished(m.status);
-                  return (
-                    <div className={`fx${live ? " live-m" : ""}`} key={m.id}>
-                      <div className="side home">
-                        <span className="tn">{m.homeTeam.shortName}</span>
-                        <span className="abbr">{m.homeTeam.tla}</span>
-                      </div>
-                      {finished || live ? (
-                        <div className="sc">
-                          {m.score.fullTime.home ?? 0} – {m.score.fullTime.away ?? 0}
-                          {finished && <div className="sc-tag">FT</div>}
-                          {live && <div className="sc-tag lv">Live</div>}
-                        </div>
-                      ) : (
-                        <div className="when">{fmtTime(m.utcDate)}</div>
-                      )}
-                      <div className="side away">
-                        <span className="abbr">{m.awayTeam.tla}</span>
-                        <span className="tn">{m.awayTeam.shortName}</span>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            ))}
+            {/* Knockout matches */}
+            {knockoutFixtureDates.map((date) => <FixtureDay key={date} date={date} />)}
+            {/* Group stage archive */}
+            {groupStageDates.length > 0 && (
+              <>
+                <div style={{ margin: "32px 0 12px", borderTop: "1px solid rgba(255,255,255,.07)", paddingTop: 24 }}>
+                  <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 10, letterSpacing: ".12em", textTransform: "uppercase", color: "var(--mut2)", marginBottom: 4 }}>
+                    Group Stage — Final Results
+                  </div>
+                </div>
+                {groupStageDates.map((date) => <FixtureDay key={date} date={date} />)}
+              </>
+            )}
           </>
           )}
         </div>
@@ -414,7 +489,7 @@ export default function Dashboard() {
       <div className={`section${tab === "goals" ? " show" : ""}`}>
         <div className="wrap">
           <h2 className="sectitle">Goals Per Team</h2>
-          <p className="secnote">Total goals scored so far · group stage</p>
+          <p className="secnote">Total goals scored across all stages</p>
           {!data ? (
             <div className="loading">Loading…</div>
           ) : teamGoals.length === 0 ? (
@@ -443,67 +518,110 @@ export default function Dashboard() {
         <div className="wrap">
           <h2 className="sectitle">Knockout Bracket</h2>
           <p className="secnote">First-ever Round of 32 in the 48-team format · final at MetLife Stadium, 19 July</p>
-          <div className="bracket-intro">
-            Completed matches show real results. For upcoming fixtures where both teams are known, click a team to predict the winner — your picks cascade forward automatically.
+
+          {/* Sub-tab toggle */}
+          <div style={{ display: "flex", gap: 0, borderBottom: "1px solid var(--line)", marginBottom: 20 }}>
+            {(["live", "picks"] as const).map((v) => (
+              <button
+                key={v}
+                onClick={() => setMyPicksView(v)}
+                style={{
+                  background: "none", border: "none",
+                  borderBottom: myPicksView === v ? "2px solid var(--green)" : "2px solid transparent",
+                  color: myPicksView === v ? "var(--green)" : "var(--mut)",
+                  fontFamily: "'JetBrains Mono',monospace", fontSize: 11,
+                  letterSpacing: ".08em", textTransform: "uppercase",
+                  padding: "8px 14px", marginBottom: -1, cursor: "pointer",
+                }}
+              >
+                {v === "live" ? "Live Bracket" : "My Picks"}
+              </button>
+            ))}
           </div>
+
           {!data ? (
             <div className="loading">Loading…</div>
-          ) : (() => {
-            const rounds = [r32, r16, qf, sf, fin];
-            const champion = getBracketWinner(4, 0, rounds) ?? (fin.length && isFinished(fin[0].status) ? getBracketWinner(4, 0, rounds) : null);
-            const hasPicks = Object.keys(bracketPicks).length > 0;
-            return (<>
-              {hasPicks && (
+          ) : myPicksView === "live" ? (
+            <div className="bracket-scroll">
+              <div className="rounds">
+                <LiveBracketRound matches={r32} count={16} label="Round of 32" />
+                <LiveBracketRound matches={r16} count={8}  label="Round of 16" />
+                <LiveBracketRound matches={qf}  count={4}  label="Quarter-finals" />
+                <LiveBracketRound matches={sf}  count={2}  label="Semi-finals" />
+                <div className="rnd">
+                  <h4>Final</h4>
+                  <div className="rnd-matches">
+                    <div className="bracket-pair">
+                      <div className="bracket-pair-item">
+                        <LiveMatchupCard m={fin[0]} />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div className="rnd">
+                  <h4>Champion</h4>
+                  <div className="rnd-matches">
+                    <div className="bracket-champion">
+                      <div className="trophy-icon">🏆</div>
+                      {fin[0] && isFinished(fin[0].status) ? (() => {
+                        const hs = fin[0].score.fullTime.home ?? 0;
+                        const as_ = fin[0].score.fullTime.away ?? 0;
+                        const champ = hs > as_ ? fin[0].homeTeam : fin[0].awayTeam;
+                        return <>
+                          <div className="champ-label">World Champion</div>
+                          <div className="champ-name" style={{ color: "var(--green)", fontWeight: 700, fontSize: 14 }}>{champ.shortName}</div>
+                        </>;
+                      })() : <>
+                        <div className="champ-label">Champion 2026</div>
+                        <div className="champ-name">19 July · MetLife</div>
+                      </>}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : (
+            /* My Picks */
+            <>
+              <p style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: "var(--mut)", marginBottom: 12 }}>
+                Pick your predicted winners — independent of real results, just for fun.
+              </p>
+              {Object.keys(myPicks).length > 0 && (
                 <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
-                  <button className="bracket-reset-btn" onClick={() => { setBracketPicks({}); localStorage.removeItem('wc26bp'); }}>
-                    Reset my picks
+                  <button
+                    className="bracket-reset-btn"
+                    onClick={() => { setMyPicks({}); localStorage.removeItem('wc26mp'); }}
+                  >
+                    Reset picks
                   </button>
                 </div>
               )}
               <div className="bracket-scroll">
                 <div className="rounds">
-                  <BracketRound matches={r32} count={16} label="Round of 32" roundIdx={0} rounds={rounds} />
-                  <BracketRound matches={r16} count={8}  label="Round of 16" roundIdx={1} rounds={rounds} />
-                  <BracketRound matches={qf}  count={4}  label="Quarter-finals" roundIdx={2} rounds={rounds} />
-                  <BracketRound matches={sf}  count={2}  label="Semi-finals" roundIdx={3} rounds={rounds} />
-                  <div className="rnd">
-                    <h4>Final</h4>
-                    <div className="rnd-matches">
-                      <div className="bracket-pair">
-                        <div className="bracket-pair-item">
-                          <MatchupCard m={fin[0]} roundIdx={4} matchIdx={0} rounds={rounds} />
-                        </div>
-                      </div>
-                    </div>
-                  </div>
+                  <MyPicksRound count={16} label="Round of 32" round={0} />
+                  <MyPicksRound count={8}  label="Round of 16" round={1} />
+                  <MyPicksRound count={4}  label="Quarter-finals" round={2} />
+                  <MyPicksRound count={2}  label="Semi-finals" round={3} />
+                  <MyPicksRound count={1}  label="Final" round={4} />
                   <div className="rnd">
                     <h4>Champion</h4>
                     <div className="rnd-matches">
-                      {(() => {
-                        const champ = getBracketWinner(4, 0, rounds);
-                        return (
-                          <div className="bracket-champion">
-                            <div className="trophy-icon">🏆</div>
-                            {champ ? (
-                              <>
-                                <div className="champ-label">Your Pick</div>
-                                <div className="champ-name" style={{ color: "var(--green)", fontWeight: 700, fontSize: 14 }}>{champ.shortName}</div>
-                              </>
-                            ) : (
-                              <>
-                                <div className="champ-label">Champion 2026</div>
-                                <div className="champ-name">19 July · MetLife</div>
-                              </>
-                            )}
-                          </div>
-                        );
-                      })()}
+                      <div className="bracket-champion">
+                        <div className="trophy-icon">🏆</div>
+                        {myPicks["4-0"] ? <>
+                          <div className="champ-label">Your Pick</div>
+                          <div className="champ-name" style={{ color: "var(--green)", fontWeight: 700, fontSize: 14 }}>{myPicks["4-0"]}</div>
+                        </> : <>
+                          <div className="champ-label">Pick your champion</div>
+                          <div className="champ-name">19 July · MetLife</div>
+                        </>}
+                      </div>
                     </div>
                   </div>
                 </div>
               </div>
-            </>);
-          })()}
+            </>
+          )}
         </div>
       </div>
 
@@ -540,7 +658,7 @@ export default function Dashboard() {
                   <h3>Leading Scorers</h3>
                   <span className="award">adidas Golden Boot</span>
                 </div>
-                <p className="board-note">Goals scored · group stage</p>
+                <p className="board-note">Goals scored · all stages</p>
                 {scorers.map((s, i) => (
                   <div className={`row${i === 0 ? " top" : ""}`} key={`${s.player.name}-${i}`}>
                     <div className="rank">{i + 1}</div>
@@ -571,7 +689,7 @@ export default function Dashboard() {
                   <h3>Most Assists</h3>
                   <span className="award">Playmakers</span>
                 </div>
-                <p className="board-note">Assists · group stage</p>
+                <p className="board-note">Assists · all stages</p>
                 {assistLeaders.length === 0 ? (
                   <p style={{ color: "var(--mut)", fontFamily: "'JetBrains Mono',monospace", fontSize: 12 }}>
                     No assist data yet
@@ -600,7 +718,6 @@ export default function Dashboard() {
           <h2 className="sectitle">My Team</h2>
           <p className="secnote">Select a nation to follow their full World Cup journey</p>
 
-          {/* Team selector */}
           <div className="team-select-wrap">
             <label className="team-select-label" htmlFor="team-pick">Choose your team</label>
             <select
@@ -636,7 +753,6 @@ export default function Dashboard() {
           ) : eliminatedTLAs.has(selectedTeam) ? null : !data ? (
             <div className="loading">Loading…</div>
           ) : (() => {
-            // Find team's group
             const teamGroup = Object.entries(data.groupMap).find(([, rows]) =>
               rows.some((r) => r.team.tla === selectedTeam)
             );
@@ -644,16 +760,14 @@ export default function Dashboard() {
             const groupRows = teamGroup?.[1] ?? [];
             const teamInfo = groupRows.find((r) => r.team.tla === selectedTeam)?.team;
 
-            // All matches involving this team
             const teamMatches = data.matches.filter(
               (m) => m.homeTeam?.tla === selectedTeam || m.awayTeam?.tla === selectedTeam
             );
             const groupMatches = teamMatches.filter((m) => m.stage === "GROUP_STAGE")
               .sort((a, b) => new Date(a.utcDate).getTime() - new Date(b.utcDate).getTime());
-            const knockoutMatches = teamMatches.filter((m) => m.stage !== "GROUP_STAGE")
+            const knockoutMatchesForTeam = teamMatches.filter((m) => m.stage !== "GROUP_STAGE")
               .sort((a, b) => new Date(a.utcDate).getTime() - new Date(b.utcDate).getTime());
 
-            // Work out if team has qualified (top 2) or in the running (3rd)
             const teamRow = groupRows.find((r) => r.team.tla === selectedTeam);
             const position = groupRows.findIndex((r) => r.team.tla === selectedTeam) + 1;
             const gamesPlayed = teamRow?.playedGames ?? 0;
@@ -679,7 +793,6 @@ export default function Dashboard() {
 
             return (
               <div className="journey">
-                {/* Group standing */}
                 <div className="journey-block">
                   <div className="journey-block-head">
                     <h3>Group {groupLetter}</h3>
@@ -716,7 +829,6 @@ export default function Dashboard() {
                   </div>
                 </div>
 
-                {/* Group stage matches */}
                 <div className="journey-block">
                   <div className="journey-block-head">
                     <h3>Group Stage Fixtures</h3>
@@ -724,7 +836,6 @@ export default function Dashboard() {
                   <div className="journey-matches">
                     {groupMatches.map((m) => {
                       const isHome = m.homeTeam?.tla === selectedTeam;
-                      const opponent = isHome ? m.awayTeam : m.homeTeam;
                       const finished = isFinished(m.status);
                       const live = isLive(m.status);
                       const result = matchResult(m);
@@ -751,15 +862,14 @@ export default function Dashboard() {
                   </div>
                 </div>
 
-                {/* Knockout journey */}
-                {knockoutMatches.length > 0 && (
+                {knockoutMatchesForTeam.length > 0 && (
                   <div className="journey-block">
                     <div className="journey-block-head">
                       <h3>Knockout Stage</h3>
                       <span className="stage-badge">In Progress</span>
                     </div>
                     <div className="journey-matches">
-                      {knockoutMatches.map((m) => {
+                      {knockoutMatchesForTeam.map((m) => {
                         const isHome = m.homeTeam?.tla === selectedTeam;
                         const finished = isFinished(m.status);
                         const live = isLive(m.status);
@@ -793,7 +903,6 @@ export default function Dashboard() {
                   </div>
                 )}
 
-                {/* Not yet in knockout */}
                 {teamMatches.filter((m) => m.stage !== "GROUP_STAGE").length === 0 && gamesPlayed < totalGroupGames && (
                   <div className="journey-block">
                     <div className="journey-block-head">
@@ -810,9 +919,7 @@ export default function Dashboard() {
                   </div>
                 )}
 
-                {/* Road to the Final */}
                 {(() => {
-                  // Known round dates & venues for WC 2026 (used when team's match isn't drawn yet)
                   const roundInfo: Record<string, { dates: string; venue: string }> = {
                     LAST_32:        { dates: "28 Jun – 3 Jul",  venue: "Various stadiums" },
                     LAST_16:        { dates: "4 – 7 Jul",       venue: "Various stadiums" },
@@ -846,7 +953,6 @@ export default function Dashboard() {
                           const finished = m ? isFinished(m.status) : false;
                           const live     = m ? isLive(m.status) : false;
                           const isHome   = m?.homeTeam?.tla === selectedTeam;
-                          const opponent = m ? (isHome ? m.awayTeam : m.homeTeam) : null;
                           const hs = m?.score?.fullTime?.home ?? 0;
                           const as_ = m?.score?.fullTime?.away ?? 0;
                           const ourGoals   = isHome ? hs : as_;
@@ -854,6 +960,7 @@ export default function Dashboard() {
                           const won  = finished && ourGoals > theirGoals;
                           const lost = finished && ourGoals < theirGoals;
                           const drew = finished && ourGoals === theirGoals;
+                          const opponent = m ? (isHome ? m.awayTeam : m.homeTeam) : null;
 
                           const info = roundInfo[key];
                           const dateStr = m ? fmtDate(m.utcDate) : info.dates;
@@ -895,11 +1002,10 @@ export default function Dashboard() {
         </div>
       </div>
 
-
       <footer>
         <div className="wrap">
           Live data via football-data.org · auto-refreshes every{" "}
-          {anyLiveNow ? "30s during live matches" : "60s"} · group stage in progress.
+          {anyLiveNow ? "30s during live matches" : "60s"} · knockout stage in progress.
           <br />
           A fan-made dashboard · World Cup 2026 · USA / Canada / Mexico
         </div>
